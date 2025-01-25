@@ -176,8 +176,20 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
     }
 
     // Register the "New File as Root..." command.
-    context.subscriptions.push(vscode.commands.registerCommand("save-as-root.newFile", async (/** @type {vscode.Uri} */uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand("save-as-root.newFile", async (/** @type {vscode.Uri | undefined} */uri) => {
         try {
+            // `uri` is set when the command is invoked from the explorer's context menu.
+            // Otherwise, we fall back to the workspace folder or the user's home directory.
+            if (uri === undefined && vscode.window.activeTextEditor !== undefined) {
+                uri = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri)?.uri
+            }
+            if (uri === undefined && vscode.workspace.workspaceFolders !== undefined && vscode.workspace.workspaceFolders.length > 0) {
+                uri = vscode.workspace.workspaceFolders[0].uri
+            }
+            if (uri === undefined) {
+                uri = vscode.Uri.parse(os.homedir())
+            }
+
             if (uri.scheme !== "file") {
                 await vscode.window.showErrorMessage(`Unsupported uri scheme: ${uri.scheme}`)
                 return
