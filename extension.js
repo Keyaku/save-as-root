@@ -200,6 +200,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 return
             }
             await sudoWriteFile(filepath, "", "root")
+            await vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(filepath))
         } catch (err) {
             await vscode.window.showErrorMessage(`[Save as Root] ${/** @type {Error} */(err).message}`)
         }
