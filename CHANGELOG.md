@@ -1,3 +1,8 @@
+1.9.0
+- Support executing 'New File as Root...' from the Command Palette. #28
+- Open an editor tab after creating a file with "New File as Root...".
+- Disable "save-as-root.command" in untrusted workspaces.
+
 1.8.0
 - Added the "New File as Root..." context menu item to the explorer.
 
