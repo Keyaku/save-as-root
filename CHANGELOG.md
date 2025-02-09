@@ -1,3 +1,6 @@
+1.10.0
+- Added the configuration "save-as-root.files.encoding" as a temporary solution for #30.
+
 1.9.0
 - Support executing 'New File as Root...' from the Command Palette. #28
 - Open an editor tab after creating a file with "New File as Root...".
