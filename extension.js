@@ -5,13 +5,23 @@ const path = require("path")
 const iconv = require("iconv-lite")
 
 /** @returns {Promise<void>} */
-const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | Buffer} */content, /** @type {string} the `sudo --user=user` option  */user) => {
+const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | Buffer} */content, /** @type {string} the `sudo --user=user` option  */user, /** @type {boolean} */ isFlatpak = false) => {
     const config = vscode.workspace.getConfiguration("save-as-root")
     return new Promise((resolve, reject) => {
-        // 1. Authenticate with `sudo -S -p 'password:' sh`.
-        // 2. Call `echo file contents:` to inform the parent process that the authentication was successful.
-        // 3. Write the file contents with `cat <&0 > "$filename"`.
-        const p = execFile(/* "sudo" or "/usr/bin/sudo" */config.get("command", "sudo"), [...(user === "root" ? [] : ["-u", user]), "-S", "-p", "password:", `filename=${filename}`, "sh", "-c", 'echo "file contents:" >&2; cat <&0 > "$filename"'])
+		// 1. Check if running under Flatpak, swapping to the appropriate commands accordingly.
+        // 2. Authenticate with `sudo -S -p 'password:' sh`.
+        // 3. Call `echo file contents:` to inform the parent process that the authentication was successful.
+        // 4. Write the file contents with `cat <&0 > "$filename"`.
+		let sudo_cmd = config.get("command", "sudo")
+		let sudo_args = [...(user === "root" ? [] : ["-u", user]), "-S", "-p", "password:", `filename=${filename}`, "sh", "-c", 'echo "file contents:" >&2; cat <&0 > "$filename"']
+
+		// Check if running under Flatpak
+		if (isFlatpak) {
+			sudo_cmd = "flatpak-spawn"
+			sudo_args = ["--host", "sudo", ...sudo_args]
+		}
+
+        const p = execFile(/* "sudo", "/usr/bin/sudo" or "flatpak-spawn" */sudo_cmd, sudo_args)
         p.on("error", (err) => {
             stopTimer()
             reject(err)
@@ -91,6 +101,16 @@ const encodeTextWithVSCodeEncodingName = (/** @type {string} */content, /** @typ
     }
 }
 
+/** @returns {Promise<boolean>} */
+const checkIfFileExists = async (/** @type {string} */filePath) =>  {
+    try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
+        return true;
+    } catch (error) {
+		return false;
+    }
+}
+
 exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
     // Register the "Save as Root" command.
     context.subscriptions.push(vscode.commands.registerCommand("save-as-root.saveFile", async (/** @type {string | undefined} */user = "root") => {
@@ -105,11 +125,12 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
         }
 
         const encoding = /** @type {VSCodeFileEncodingName} */(vscode.workspace.getConfiguration("save-as-root", editor.document).get("files.encoding", "utf8"))
+		const isFlatpak = await checkIfFileExists("/.flatpak-info")
 
         try {
             if (!editor.document.isUntitled) {
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
+                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user, isFlatpak)
 
                 // Refocus the `editor` in case the user has switched to a different editor during save, to ensure the next command reverts the correct editor.
                 if (vscode.window.activeTextEditor !== editor) {
@@ -120,7 +141,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 await vscode.commands.executeCommand("workbench.action.files.revert")
             } else if (editor.document.uri.fsPath.startsWith("/")) {  // Untitled files opened with the "code" command (e.g. `code nonexistent.txt`)
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
+                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user, isFlatpak)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -144,7 +165,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 const filename = input.fsPath
 
                 // Create a file and write the editor content to it.
-                await sudoWriteFile(filename, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
+                await sudoWriteFile(filename, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user, isFlatpak)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -197,6 +218,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
 
     // Register the "New File as Root..." command.
     context.subscriptions.push(vscode.commands.registerCommand("save-as-root.newFile", async (/** @type {vscode.Uri | undefined} */uri) => {
+		const isFlatpak = await checkIfFileExists("/.flatpak-info")
         try {
             /** @type {VSCodeFileEncodingName} */
             let encoding = "utf8"
@@ -223,7 +245,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
             if (!filepath || filepath.endsWith(path.sep)) {
                 return
             }
-            await sudoWriteFile(filepath, encodeTextWithVSCodeEncodingName("", encoding), "root")
+            await sudoWriteFile(filepath, encodeTextWithVSCodeEncodingName("", encoding), "root", isFlatpak)
             await vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(filepath))
         } catch (err) {
             await vscode.window.showErrorMessage(`[Save as Root] ${/** @type {Error} */(err).message}`)
