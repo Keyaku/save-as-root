@@ -1,27 +1,38 @@
 const vscode = require("vscode")
 const { execFile } = require("child_process")
+const fs = require("fs")
 const os = require("os")
 const path = require("path")
 const iconv = require("iconv-lite")
 
+// Simplest indicator that this is running in a Flatpak sandbox. If a VScode detects these on a non-sandbox system, that's on the user.
+const isFlatpak = !!(process.env.FLATPAK_SANDBOX_DIR || process.env.FLATPAK_ID);
+
 /** @returns {Promise<void>} */
-const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | Buffer} */content, /** @type {string} the `sudo --user=user` option  */user, /** @type {boolean} */ isFlatpak = false) => {
+const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | Buffer} */content, /** @type {string} the `sudo --user=user` option  */user) => {
+	// Check if file is in sandbox, and update its path accordingly
+	filename = await adjustPathForSandbox(filename)
+
     const config = vscode.workspace.getConfiguration("save-as-root")
     return new Promise((resolve, reject) => {
-		// 1. Check if running under Flatpak, swapping to the appropriate commands accordingly.
+		// 1. Check if running under Flatpak and filename non-empty, swapping to the appropriate commands accordingly.
         // 2. Authenticate with `sudo -S -p 'password:' sh`.
         // 3. Call `echo file contents:` to inform the parent process that the authentication was successful.
         // 4. Write the file contents with `cat <&0 > "$filename"`.
-		let sudo_cmd = config.get("command", "sudo")
-		let sudo_args = [...(user === "root" ? [] : ["-u", user]), "-S", "-p", "password:", `filename=${filename}`, "sh", "-c", 'echo "file contents:" >&2; cat <&0 > "$filename"']
+		let sudoCmd = config.get("command", "sudo")
+		let sudoArgs = [...(user === "root" ? [] : ["-u", user]), "-S", "-p", "password:", `filename=${filename}`, "sh", "-c", 'echo "file contents:" >&2; cat <&0 > "$filename"']
 
 		// Check if running under Flatpak
 		if (isFlatpak) {
-			sudo_cmd = "flatpak-spawn"
-			sudo_args = ["--host", "sudo", ...sudo_args]
+			if (isEmpty(filename)) {
+				reject(new Error("File is located in sandbox and cannot be modified."))
+			}
+
+			sudoCmd = "flatpak-spawn"
+			sudoArgs = ["--host", "sudo", ...sudoArgs]
 		}
 
-        const p = execFile(/* "sudo", "/usr/bin/sudo" or "flatpak-spawn" */sudo_cmd, sudo_args)
+        const p = execFile(/* "sudo", "/usr/bin/sudo" or "flatpak-spawn" */sudoCmd, sudoArgs)
         p.on("error", (err) => {
             stopTimer()
             reject(err)
@@ -101,14 +112,45 @@ const encodeTextWithVSCodeEncodingName = (/** @type {string} */content, /** @typ
     }
 }
 
-/** @returns {Promise<boolean>} */
-const checkIfFileExists = async (/** @type {string} */filePath) =>  {
-    try {
-        await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
-        return true;
-    } catch (error) {
-		return false;
+/** @returns {boolean} */
+const isEmpty = (/** @type {string} */value) => {
+	return (value == null || (typeof value === "string" && value.trim().length === 0))
+}
+
+/** @returns {Promise<string>} */
+const adjustPathForSandbox = async (/** @type {string} */filePath) => {
+	// Do nothing if not in Flatpak sandbox
+	if (!isFlatpak) {
+		return filePath
+	}
+
+	let isReserved = false
+	let isInHost = false
+
+	// List of reserved paths
+	const sandboxPrefixes = [
+		"/app", "/bin", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/run/flatpak", "/run/host", "/sbin", "/usr"
+	];
+
+	// Partial indication that file is in a sandbox
+	isReserved = sandboxPrefixes.some(pfx => filePath.startsWith(pfx))
+
+	// If reserved, check if file exists under /run/host
+	if (isReserved) {
+		// Append only if path does not start with /run/host
+		const hostFilePath = filePath.startsWith("/run/host") ? filePath : path.join("/run/host", filePath)
+		// If it exists, then update the filePath since it's there we'll be saving our file
+		if (fs.existsSync(hostFilePath)) {
+			filePath = filePath.replace("/run/host", "")
+			isInHost = true
+		}
+	}
+
+    // Result: if it's under a reserved path AND it doesn't exist in host, then the file is located in the sandbox; using such a path is unintended behavior.
+	if (isReserved && !isInHost) {
+        filePath = ""
     }
+    return filePath;
 }
 
 exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
@@ -125,12 +167,11 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
         }
 
         const encoding = /** @type {VSCodeFileEncodingName} */(vscode.workspace.getConfiguration("save-as-root", editor.document).get("files.encoding", "utf8"))
-		const isFlatpak = await checkIfFileExists("/.flatpak-info")
 
         try {
             if (!editor.document.isUntitled) {
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user, isFlatpak)
+                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
 
                 // Refocus the `editor` in case the user has switched to a different editor during save, to ensure the next command reverts the correct editor.
                 if (vscode.window.activeTextEditor !== editor) {
@@ -141,7 +182,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 await vscode.commands.executeCommand("workbench.action.files.revert")
             } else if (editor.document.uri.fsPath.startsWith("/")) {  // Untitled files opened with the "code" command (e.g. `code nonexistent.txt`)
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user, isFlatpak)
+                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -165,7 +206,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 const filename = input.fsPath
 
                 // Create a file and write the editor content to it.
-                await sudoWriteFile(filename, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user, isFlatpak)
+                await sudoWriteFile(filename, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -193,7 +234,10 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
             } else if (err instanceof Error && err.message.includes("NixOS's wrapper.c failed.")) {  // #19
                 await vscode.window.showErrorMessage(`[Save as Root] NixOS's security wrapper prevented the sudo command from running. Try setting the configuration "save-as-root.command" to "/usr/bin/sudo". \nOriginal error:\n${/** @type {Error} */(err).message}`)
                 return
-            }
+            } else if (err instanceof Error && "path" in err && err.path === "flatpak-spawn") {
+				await vscode.window.showErrorMessage(`[Save as Root] flatpak-spawn did not work properly. If this extension is not running in a Flatpak sandbox, make sure the environment variables FLATPAK_SANDBOX_DIR and FLATPAK_SANDBOX_DIR are not set. \nOriginal error:\n${/** @type {Error} */(err).message}`)
+				return
+			}
             await vscode.window.showErrorMessage(`[Save as Root] ${/** @type {Error} */(err).message}`)
         }
     }))
@@ -218,7 +262,6 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
 
     // Register the "New File as Root..." command.
     context.subscriptions.push(vscode.commands.registerCommand("save-as-root.newFile", async (/** @type {vscode.Uri | undefined} */uri) => {
-		const isFlatpak = await checkIfFileExists("/.flatpak-info")
         try {
             /** @type {VSCodeFileEncodingName} */
             let encoding = "utf8"
@@ -245,7 +288,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
             if (!filepath || filepath.endsWith(path.sep)) {
                 return
             }
-            await sudoWriteFile(filepath, encodeTextWithVSCodeEncodingName("", encoding), "root", isFlatpak)
+            await sudoWriteFile(filepath, encodeTextWithVSCodeEncodingName("", encoding), "root")
             await vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(filepath))
         } catch (err) {
             await vscode.window.showErrorMessage(`[Save as Root] ${/** @type {Error} */(err).message}`)
