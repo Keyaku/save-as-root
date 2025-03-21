@@ -2,10 +2,9 @@ const vscode = require("vscode")
 const { execFile } = require("child_process")
 const os = require("os")
 const path = require("path")
-const iconv = require("iconv-lite")
 
 /** @returns {Promise<void>} */
-const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | Buffer} */content, /** @type {string} the `sudo --user=user` option  */user) => {
+const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | Uint8Array} */content, /** @type {string} the `sudo --user=user` option  */user) => {
     const config = vscode.workspace.getConfiguration("save-as-root")
     return new Promise((resolve, reject) => {
         // 1. Authenticate with `sudo -S -p 'password:' sh`.
@@ -74,23 +73,6 @@ const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | 
     })
 }
 
-/** @typedef {"utf8" | "utf8bom" | "utf16le" | "utf16be" | "windows1252" | "iso88591" | "iso88593" | "iso885915" | "macroman" | "cp437" | "windows1256" | "iso88596" | "windows1257" | "iso88594" | "iso885914" | "windows1250" | "iso88592" | "cp852" | "windows1251" | "cp866" | "iso88595" | "koi8r" | "koi8u" | "iso885913" | "windows1253" | "iso88597" | "windows1255" | "iso88598" | "iso885910" | "iso885916" | "windows1254" | "iso88599" | "windows1258" | "gbk" | "gb18030" | "cp950" | "big5hkscs" | "shiftjis" | "eucjp" | "euckr" | "windows874" | "iso885911" | "koi8ru" | "koi8t" | "gb2312" | "cp865" | "cp850"} VSCodeFileEncodingName */
-
-/** @returns {string | Buffer} */
-const encodeTextWithVSCodeEncodingName = (/** @type {string} */content, /** @type {VSCodeFileEncodingName} */vscodeFileEncodingName) => {
-    if (vscodeFileEncodingName === "utf8") {
-        return content
-    } else if (vscodeFileEncodingName === "utf8bom") {
-        return iconv.encode(content, "utf8", { addBOM: true })  // iconv does not accept "utf8bom" as an encoding
-    } else {
-        if (!iconv.encodingExists(vscodeFileEncodingName)) {
-            throw new Error(`Invalid file encoding: ${JSON.stringify(vscodeFileEncodingName)}`)
-        }
-
-        return iconv.encode(content, vscodeFileEncodingName, { addBOM: vscodeFileEncodingName === "utf16be" || vscodeFileEncodingName === "utf16le" })
-    }
-}
-
 exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
     // Register the "Save as Root" command.
     context.subscriptions.push(vscode.commands.registerCommand("save-as-root.saveFile", async (/** @type {string | undefined} */user = "root") => {
@@ -104,12 +86,10 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
             return
         }
 
-        const encoding = /** @type {VSCodeFileEncodingName} */(vscode.workspace.getConfiguration("save-as-root", editor.document).get("files.encoding", "utf8"))
-
         try {
             if (!editor.document.isUntitled) {
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
+                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), editor.document.uri, { encoding: editor.document.encoding }), user)
 
                 // Refocus the `editor` in case the user has switched to a different editor during save, to ensure the next command reverts the correct editor.
                 if (vscode.window.activeTextEditor !== editor) {
@@ -120,7 +100,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 await vscode.commands.executeCommand("workbench.action.files.revert")
             } else if (editor.document.uri.fsPath.startsWith("/")) {  // Untitled files opened with the "code" command (e.g. `code nonexistent.txt`)
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
+                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), editor.document.uri, { encoding: editor.document.encoding }), user)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -144,7 +124,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 const filename = input.fsPath
 
                 // Create a file and write the editor content to it.
-                await sudoWriteFile(filename, encodeTextWithVSCodeEncodingName(editor.document.getText(), encoding), user)
+                await sudoWriteFile(filename, await vscode.workspace.encode(editor.document.getText(), editor.document.uri, { encoding: editor.document.encoding }), user)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -198,14 +178,14 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
     // Register the "New File as Root..." command.
     context.subscriptions.push(vscode.commands.registerCommand("save-as-root.newFile", async (/** @type {vscode.Uri | undefined} */uri) => {
         try {
-            /** @type {VSCodeFileEncodingName} */
-            let encoding = "utf8"
+            /** @type {{ encoding: string } | undefined} */
+            let encodingOptions
 
             // `uri` is set when the command is invoked from the explorer's context menu.
             // Otherwise, we fall back to the workspace folder or the user's home directory.
             if (uri === undefined && vscode.window.activeTextEditor !== undefined) {
                 uri = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri)?.uri
-                encoding = vscode.workspace.getConfiguration("save-as-root", vscode.window.activeTextEditor.document).get("files.encoding", "utf8")
+                encodingOptions = { encoding: vscode.window.activeTextEditor.document.encoding }
             }
             if (uri === undefined && vscode.workspace.workspaceFolders !== undefined && vscode.workspace.workspaceFolders.length > 0) {
                 uri = vscode.workspace.workspaceFolders[0].uri
@@ -223,8 +203,9 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
             if (!filepath || filepath.endsWith(path.sep)) {
                 return
             }
-            await sudoWriteFile(filepath, encodeTextWithVSCodeEncodingName("", encoding), "root")
-            await vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(filepath))
+            uri = vscode.Uri.parse(filepath)
+            await sudoWriteFile(filepath, await vscode.workspace.encode("", uri, encodingOptions), "root")
+            await vscode.commands.executeCommand("vscode.open", uri)
         } catch (err) {
             await vscode.window.showErrorMessage(`[Save as Root] ${/** @type {Error} */(err).message}`)
         }
