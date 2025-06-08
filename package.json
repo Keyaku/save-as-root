@@ -5,7 +5,7 @@
 	"version": "1.11.0",
 	"publisher": "yy0931",
 	"engines": {
-		"vscode": "^1.57.0"
+		"vscode": "^1.100.0"
 	},
 	"repository": {
 		"url": "https://github.com/yy0931/save-as-root",
@@ -18,11 +18,7 @@
 	"categories": [
 		"Other"
 	],
-	"activationEvents": [
-		"onCommand:save-as-root.saveFile",
-		"onCommand:save-as-root.saveFileAsSpecifiedUser",
-		"onCommand:save-as-root.newFile"
-	],
+	"activationEvents": [],
 	"keywords": [
 		"remote",
 		"ssh",
@@ -71,8 +67,5 @@
 				"save-as-root.command"
 			]
 		}
-	},
-	"enabledApiProposals": [
-		"textDocumentEncoding"
-	]
+	}
 }

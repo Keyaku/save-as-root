@@ -1,3 +1,15 @@
+/**
+ * @file Provides the following commands to VSCode:
+ * - save-as-root.saveFile(user: string = "root"): Saves the current file with root privileges or as the specified user
+ * - save-as-root.saveFileAsSpecifiedUser(): Prompts for a username and saves the current file as that user
+ * - save-as-root.newFile(uri?: vscode.Uri): Creates a new file with root privileges at the optional URI path
+ * 
+ * Notes:
+ * - This script is intentionally written in JavaScript instead of TypeScript, as it's a small single-file script.
+ *   I will not accept PRs converting this project to TypeScript.
+ * - Feel free to fork this project, but do **not** remove the LICENSE file, as was done in this fork: https://github.com/FriedrichVoelker/vscode-root-on-remote/issues/2
+ */
+
 const vscode = require("vscode")
 const { execFile } = require("child_process")
 const os = require("os")
@@ -89,7 +101,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
         try {
             if (!editor.document.isUntitled) {
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), editor.document.uri, { encoding: editor.document.encoding }), user)
+                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
 
                 // Refocus the `editor` in case the user has switched to a different editor during save, to ensure the next command reverts the correct editor.
                 if (vscode.window.activeTextEditor !== editor) {
@@ -100,7 +112,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 await vscode.commands.executeCommand("workbench.action.files.revert")
             } else if (editor.document.uri.fsPath.startsWith("/")) {  // Untitled files opened with the "code" command (e.g. `code nonexistent.txt`)
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), editor.document.uri, { encoding: editor.document.encoding }), user)
+                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -124,7 +136,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 const filename = input.fsPath
 
                 // Create a file and write the editor content to it.
-                await sudoWriteFile(filename, await vscode.workspace.encode(editor.document.getText(), editor.document.uri, { encoding: editor.document.encoding }), user)
+                await sudoWriteFile(filename, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
 
                 // Save the viewColumn property before closing the editor.
                 const column = editor.viewColumn
@@ -183,6 +195,8 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
 
             // `uri` is set when the command is invoked from the explorer's context menu.
             // Otherwise, we fall back to the workspace folder or the user's home directory.
+            // `uri` is set when the command is invoked from the explorer's context menu.
+            // Otherwise, we fall back to the workspace folder or the user's home directory.
             if (uri === undefined && vscode.window.activeTextEditor !== undefined) {
                 uri = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri)?.uri
                 encodingOptions = { encoding: vscode.window.activeTextEditor.document.encoding }
@@ -204,7 +218,10 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 return
             }
             uri = vscode.Uri.parse(filepath)
-            await sudoWriteFile(filepath, await vscode.workspace.encode("", uri, encodingOptions), "root")
+            const emptyString = encodingOptions === undefined ?  // TypeScript complains if undefined is passed as the second parameter to encode
+                await vscode.workspace.encode("") :
+                await vscode.workspace.encode("", encodingOptions)
+            await sudoWriteFile(filepath, emptyString, "root")
             await vscode.commands.executeCommand("vscode.open", uri)
         } catch (err) {
             await vscode.window.showErrorMessage(`[Save as Root] ${/** @type {Error} */(err).message}`)
