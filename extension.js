@@ -100,7 +100,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
         }
 
         try {
-            if (!editor.document.isUntitled) {
+            if (!editor.document.isUntitled) {  // Local files
                 // Write the editor content to the file.
                 await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
 
@@ -111,32 +111,22 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
 
                 // Reload the file contents from the file system.
                 await vscode.commands.executeCommand("workbench.action.files.revert")
-            } else if (editor.document.uri.fsPath.startsWith("/")) {  // Untitled files opened with the "code" command (e.g. `code nonexistent.txt`)
+            } else { // Untitled files
+                // Get the filepath of the new file.
+                /** @type {string} */
+                let filename
+                if (editor.document.fileName.startsWith("/")) {  // Untitled files opened with the "code" command (e.g. `code nonexistent.txt`)
+                    filename = editor.document.fileName
+                } else {  // Untitled files with a numbered name such as "Untitled-1"
+                    // Show the save dialog.
+                    const input = await vscode.window.showSaveDialog({})
+                    if (input === undefined) {
+                        return
+                    }
+                    filename = input.fsPath
+                }
+
                 // Write the editor content to the file.
-                await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
-
-                // Save the viewColumn property before closing the editor.
-                const column = editor.viewColumn
-
-                // Refocus the `editor` in case the user has switched to a different editor during save, to ensure the next command reverts and closes the correct editor.
-                if (vscode.window.activeTextEditor !== editor) {
-                    await vscode.window.showTextDocument(editor.document, editor.viewColumn)
-                }
-
-                // Close the editor for the untitled file.
-                await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor")
-
-                // Open the newly created file.
-                await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(editor.document.uri.fsPath), column)
-            } else { // Untitled files with a numbered name such as "Untitled-1"
-                // Show the save dialog.
-                const input = await vscode.window.showSaveDialog({})
-                if (input === undefined) {
-                    return
-                }
-                const filename = input.fsPath
-
-                // Create a file and write the editor content to it.
                 await sudoWriteFile(filename, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
 
                 // Save the viewColumn property before closing the editor.
@@ -150,7 +140,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 // Close the editor for the untitled file.
                 await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor")
 
-                // Open the newly created file.
+                // Open the new document in an editor.
                 await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(filename), column)
             }
         } catch (err) {
