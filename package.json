@@ -46,6 +46,13 @@
 				"save-as-root.command": {
 					"type": "string",
 					"default": "sudo"
+				},
+				"save-as-root.extensionsToNotifyOnSave": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"examples": [["pucelle.run-on-save"]]
 				}
 			}
 		},
