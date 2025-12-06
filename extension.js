@@ -141,7 +141,7 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor")
 
                 // Open the new document in an editor.
-                await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(filename), column)
+                await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(filename, { encoding: editor.document.encoding }), column)
             }
         } catch (err) {
             // Handle errors.
