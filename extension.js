@@ -94,7 +94,8 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
             return
         }
         if (!["file", "untitled"].includes(editor.document.uri.scheme)) {
-            await vscode.window.showErrorMessage(`scheme ${editor.document.uri.scheme} is not supported.`)
+            // Fall back to a normal save when saving a document that isn't a local file, such as 'User Settings (JSON)', for convenience. #34
+            vscode.commands.executeCommand("workbench.action.files.save")
             return
         }
 
