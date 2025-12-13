@@ -46,6 +46,14 @@
 				"save-as-root.command": {
 					"type": "string",
 					"default": "sudo"
+				},
+				"save-as-root.extensionsToNotifyOnSave": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": ["pucelle.run-on-save"],
+					"markdownDescription": "A list of extension IDs to notify when a file is saved using the Save as Root extension. Only extensions that support save notifications from the Save as Root extension should be added."
 				}
 			}
 		},

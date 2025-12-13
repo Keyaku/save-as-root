@@ -85,6 +85,50 @@ const sudoWriteFile = async (/** @type {string} */filename, /** @type {string | 
     })
 }
 
+/**
+ * @typedef {{
+ *     onWillSaveDocument(document: vscode.TextDocument, reason: vscode.TextDocumentSaveReason): Promise<void>
+ *     onDocumentSaved(document: vscode.TextDocument): Promise<void>
+ * }} SaveEventsAPI
+ */
+
+/**
+ * Calls the 'on save' API (the return value of activate()) of pucelle's "Run on Save", or any other extension with a compatible API. #35
+ * We assume the extensions specified in the configuration "save-as-root.extensionsToNotifyOnSave" implement {@link SaveEventsAPI}.
+ */
+const notifyToOtherExtensions = async (/** @type {"willSave" | "didSave"} */eventName, /** @type {vscode.TextDocument} */document) => {
+    for (const extensionId of
+        // Get the list of extensions to notify from the configuration.
+        vscode.workspace.getConfiguration("save-as-root").get("extensionsToNotifyOnSave", /** @type {string[]} */([]))
+    ) {
+        // Get the extension, skipping if the extension is not installed.
+        const extension = vscode.extensions.getExtension(extensionId)
+        if (extension === undefined) {
+            continue
+        }
+
+        // Activate the extension if it is not active yet.
+        if (!extension.isActive) {
+            await extension.activate()
+        }
+
+        // Call an API function of the extension.
+        const exports = /** @type {SaveEventsAPI} */(extension.exports)
+        switch (eventName) {
+            case "willSave":
+                if (typeof exports.onWillSaveDocument === "function") {
+                    await exports.onWillSaveDocument(document, vscode.TextDocumentSaveReason.Manual)
+                }
+                break
+            case "didSave":
+                if (typeof exports.onDocumentSaved === "function") {
+                    await exports.onDocumentSaved(document)
+                }
+                break
+        }
+    }
+}
+
 exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
     // Register the "Save as Root" command.
     context.subscriptions.push(vscode.commands.registerCommand("save-as-root.saveFile", async (/** @type {string | undefined} */user = "root") => {
@@ -101,6 +145,9 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
 
         try {
             if (!editor.document.isUntitled) {  // Local files
+                // Trigger the will save event.
+                await notifyToOtherExtensions("willSave", editor.document)
+
                 // Write the editor content to the file.
                 await sudoWriteFile(editor.document.fileName, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
 
@@ -111,6 +158,9 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
 
                 // Reload the file contents from the file system.
                 await vscode.commands.executeCommand("workbench.action.files.revert")
+
+                // Trigger the did save event.
+                await notifyToOtherExtensions("didSave", editor.document)
             } else { // Untitled files
                 // Get the filepath of the new file.
                 /** @type {string} */
@@ -125,6 +175,13 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                     }
                     filename = input.fsPath
                 }
+
+                // Create a new file and open it as a document.
+                await sudoWriteFile(filename, "", user)
+                const newDocument = await vscode.workspace.openTextDocument(filename, { encoding: editor.document.encoding })
+
+                // Trigger the will save event.
+                await notifyToOtherExtensions("willSave", newDocument)
 
                 // Write the editor content to the file.
                 await sudoWriteFile(filename, await vscode.workspace.encode(editor.document.getText(), { encoding: editor.document.encoding }), user)
@@ -141,7 +198,13 @@ exports.activate = (/** @type {vscode.ExtensionContext} */context) => {
                 await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor")
 
                 // Open the new document in an editor.
-                await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(filename, { encoding: editor.document.encoding }), column)
+                await vscode.window.showTextDocument(newDocument, column)
+
+                // Reload the file contents from the file system.
+                await vscode.commands.executeCommand("workbench.action.files.revert")
+
+                // Trigger the did save event.
+                await notifyToOtherExtensions("didSave", newDocument)
             }
         } catch (err) {
             // Handle errors.
