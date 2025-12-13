@@ -116,10 +116,14 @@ const notifyToOtherExtensions = async (/** @type {"willSave" | "didSave"} */even
         const exports = /** @type {SaveEventsAPI} */(extension.exports)
         switch (eventName) {
             case "willSave":
-                await exports.onWillSaveDocument(document, vscode.TextDocumentSaveReason.Manual)
+                if (typeof exports.onWillSaveDocument === "function") {
+                    await exports.onWillSaveDocument(document, vscode.TextDocumentSaveReason.Manual)
+                }
                 break
             case "didSave":
-                await exports.onDocumentSaved(document)
+                if (typeof exports.onDocumentSaved === "function") {
+                    await exports.onDocumentSaved(document)
+                }
                 break
         }
     }

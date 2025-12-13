@@ -52,7 +52,8 @@
 					"items": {
 						"type": "string"
 					},
-					"examples": [["pucelle.run-on-save"]]
+					"default": ["pucelle.run-on-save"],
+					"markdownDescription": "A list of extension IDs to notify when a file is saved using the Save as Root extension. Only extensions that support save notifications from the Save as Root extension should be added."
 				}
 			}
 		},
